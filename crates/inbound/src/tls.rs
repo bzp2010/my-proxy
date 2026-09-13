@@ -44,8 +44,13 @@ pub fn build_acceptor(config: &TlsConfig) -> Result<SslAcceptor, TlsSetupError> 
     // clear them so those versions are actually reachable.
     builder.clear_options(SslOptions::NO_TLSV1 | SslOptions::NO_TLSV1_1);
 
-    // The preset's cipher list has no suite a TLS 1.0 client can use;
-    // widen it so a legacy-only handshake can still complete.
+    // The preset's cipher list has no suite a TLS 1.0 client can use,
+    // so widen it to let a legacy-only handshake complete. This context
+    // is shared by the whole acceptor, so SECLEVEL=0 applies to every
+    // connection, not only legacy ones: modern clients also lose the
+    // usual rejection of weak RSA/DH/ECC keys, MD5/SHA1, and RC4. This
+    // is a known, accepted tradeoff for now, not an oversight; a later
+    // change should scope it to legacy connections only.
     builder
         .set_cipher_list("DEFAULT:@SECLEVEL=0")
         .map_err(TlsSetupError::Context)?;
