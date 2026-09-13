@@ -12,9 +12,15 @@ tokio = { version = "1", features = ["full"] }
 cluster = { path = "../cluster" }
 inbound = { path = "../inbound" }
 proxy = { path = "../proxy" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
 
 [dev-dependencies]
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+openssl = "0.10"
+tokio-openssl = "0.6"
+tempfile = "3"
