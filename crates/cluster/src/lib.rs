@@ -32,7 +32,7 @@ impl Cluster {
     }
 
     pub fn report_outcome(&self, _endpoint: Endpoint, _outcome: Outcome) {
-        // 占位实现:目前不做健康降级。
+        // Placeholder: no health-based downgrading yet.
     }
 }
 
