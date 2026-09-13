@@ -1,5 +1,7 @@
 use std::future::Future;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
@@ -35,7 +37,11 @@ impl InboundServer {
             let (stream, _peer_addr) = match self.listener.accept().await {
                 Ok(pair) => pair,
                 Err(err) => {
+                    if matches!(err.kind(), ErrorKind::ConnectionAborted | ErrorKind::Interrupted) {
+                        continue;
+                    }
                     eprintln!("inbound accept error: {err:?}");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                     continue;
                 }
             };
