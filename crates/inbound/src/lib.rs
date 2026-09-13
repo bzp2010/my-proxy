@@ -13,6 +13,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 pub mod timeout;
+pub mod tls;
 
 pub type ResponseBody = BoxBody<Bytes, hyper::Error>;
 
