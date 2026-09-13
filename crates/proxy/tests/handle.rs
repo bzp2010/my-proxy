@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
@@ -33,7 +34,15 @@ async fn handle_forwards_request_to_selected_endpoint() {
     let upstream_addr = spawn_fake_upstream().await;
     let cluster = Arc::new(Cluster::new(vec![Endpoint { addr: upstream_addr }]));
 
-    let inbound_server = InboundServer::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let inbound_server = InboundServer::bind(
+        inbound::ListenAddr::Http("127.0.0.1:0".parse().unwrap()),
+        inbound::TimeoutConfig {
+            header_read: Duration::from_secs(10),
+            idle: Duration::from_secs(60),
+        },
+    )
+    .await
+    .unwrap();
     let proxy_addr = inbound_server.local_addr().unwrap();
 
     tokio::spawn(async move {

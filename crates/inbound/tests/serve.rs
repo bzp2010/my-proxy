@@ -12,7 +12,15 @@ use inbound::InboundServer;
 
 #[tokio::test]
 async fn serve_calls_handler_and_returns_its_response() {
-    let server = InboundServer::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let server = InboundServer::bind(
+        inbound::ListenAddr::Http("127.0.0.1:0".parse().unwrap()),
+        inbound::TimeoutConfig {
+            header_read: std::time::Duration::from_secs(10),
+            idle: std::time::Duration::from_secs(60),
+        },
+    )
+    .await
+    .unwrap();
     let addr = server.local_addr().unwrap();
 
     tokio::spawn(async move {
