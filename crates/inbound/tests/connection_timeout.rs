@@ -57,10 +57,11 @@ async fn header_deadline_is_not_extended_by_trickling_data() {
         ConnectionTimeout::new(mock, Duration::from_secs(10), Duration::from_millis(200));
 
     let mut buf = [0u8; 1];
-    wrapped
+    let n = wrapped
         .read(&mut buf)
         .await
         .expect("first byte should start the header-reading phase");
+    assert!(n > 0);
 
     // Each subsequent byte arrives inside its own 80ms gap (which would
     // reset an inactivity timer), but the three gaps add up to 240ms,
@@ -91,7 +92,8 @@ async fn processing_phase_disables_all_timeouts() {
         ConnectionTimeout::new(mock, Duration::from_millis(100), Duration::from_millis(100));
 
     let mut buf = [0u8; 1];
-    wrapped.read(&mut buf).await.expect("first byte should arrive");
+    let n = wrapped.read(&mut buf).await.expect("first byte should arrive");
+    assert!(n > 0);
 
     // Headers are "done"; no timeout should apply while a request runs.
     handle.begin_processing();
