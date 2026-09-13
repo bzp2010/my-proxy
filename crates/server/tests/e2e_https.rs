@@ -1,3 +1,5 @@
+mod common;
+
 use std::convert::Infallible;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -6,30 +8,26 @@ use std::process::Stdio;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
-use hyper::client::conn::http1 as client_http1;
 use hyper::server::conn::http1 as server_http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
+use tokio_openssl::SslStream;
 
 async fn spawn_fake_upstream() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        loop {
-            let (stream, _) = listener.accept().await.unwrap();
-            let io = TokioIo::new(stream);
-            let service = service_fn(|_req: Request<Incoming>| async move {
-                Ok::<_, Infallible>(Response::new(Full::new(Bytes::from("hello from upstream"))))
-            });
-            tokio::spawn(async move {
-                let _ = server_http1::Builder::new().serve_connection(io, service).await;
-            });
-        }
+        let (stream, _) = listener.accept().await.unwrap();
+        let io = TokioIo::new(stream);
+        let service = service_fn(|_req: Request<Incoming>| async move {
+            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from("hello from upstream"))))
+        });
+        let _ = server_http1::Builder::new().serve_connection(io, service).await;
     });
     addr
 }
@@ -45,16 +43,21 @@ fn write_config(contents: &str) -> (tempfile::TempDir, std::path::PathBuf) {
 }
 
 #[tokio::test]
-async fn proxies_request_through_the_compiled_binary() {
+async fn https_listener_works_through_the_compiled_binary() {
     let upstream_addr = spawn_fake_upstream().await;
-    let (_dir, config_path) = write_config(&format!(
+    let (_cert_dir, cert_path, key_path) = common::self_signed_cert();
+    let (_config_dir, config_path) = write_config(&format!(
         r#"
         [[listen]]
-        addr = "http://127.0.0.1:0"
+        addr = "https://127.0.0.1:0"
+        cert_path = "{}"
+        key_path = "{}"
 
         [backends]
         addrs = ["{upstream_addr}"]
-        "#
+        "#,
+        cert_path.display(),
+        key_path.display()
     ));
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_server"))
@@ -77,9 +80,17 @@ async fn proxies_request_through_the_compiled_binary() {
         .parse()
         .expect("failed to parse listening address");
 
-    let stream = TcpStream::connect(proxy_addr).await.expect("proxy should be listening");
-    let io = TokioIo::new(stream);
-    let (mut sender, conn) = client_http1::handshake(io).await.unwrap();
+    let mut connector_builder = SslConnector::builder(SslMethod::tls()).unwrap();
+    connector_builder.set_verify(SslVerifyMode::NONE);
+    let connector = connector_builder.build();
+
+    let tcp = TcpStream::connect(proxy_addr).await.unwrap();
+    let ssl = connector.configure().unwrap().into_ssl("localhost").unwrap();
+    let mut tls_stream = SslStream::new(ssl, tcp).unwrap();
+    std::pin::Pin::new(&mut tls_stream).connect().await.unwrap();
+
+    let io = TokioIo::new(tls_stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(async move {
         let _ = conn.await;
     });

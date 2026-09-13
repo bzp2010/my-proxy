@@ -1,45 +1,46 @@
 mod config;
 
 use std::env;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
-use cluster::{Cluster, Endpoint};
-use inbound::{InboundServer, ListenAddr, TimeoutConfig};
+use cluster::Cluster;
+use inbound::InboundServer;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let mut args = env::args().skip(1);
-    let listen_addr: SocketAddr = args
-        .next()
-        .expect("usage: server <listen_addr> <backend_addr>...")
-        .parse()
-        .expect("invalid listen address");
-    let backend_addrs: Vec<SocketAddr> = args
-        .map(|a| a.parse().expect("invalid backend address"))
-        .collect();
-    assert!(
-        !backend_addrs.is_empty(),
-        "at least one backend address is required"
-    );
+async fn main() {
+    if let Err(err) = run().await {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
 
-    let endpoints = backend_addrs.into_iter().map(|addr| Endpoint { addr }).collect();
-    let cluster = Arc::new(Cluster::new(endpoints));
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = env::args().nth(1).ok_or("usage: server <config.toml>")?;
+    let config = config::load(std::path::Path::new(&config_path))?;
+    let cluster = Arc::new(Cluster::new(config.backends));
 
-    let timeouts = TimeoutConfig {
-        header_read: Duration::from_secs(10),
-        idle: Duration::from_secs(60),
-    };
-    let server = InboundServer::bind(ListenAddr::Http(listen_addr), timeouts)
-        .await
-        .expect("failed to bind listener");
-    println!("listening on {}", server.local_addr()?);
+    let mut tasks = Vec::new();
+    for listen_addr in config.listeners {
+        let server = InboundServer::bind(listen_addr, config.timeouts).await?;
+        println!("listening on {}", server.local_addr()?);
 
-    server
-        .serve(move |req| {
-            let cluster = cluster.clone();
-            async move { proxy::handle(cluster, req).await }
-        })
-        .await
+        let cluster = cluster.clone();
+        tasks.push(tokio::spawn(async move {
+            if let Err(err) = server
+                .serve(move |req| {
+                    let cluster = cluster.clone();
+                    async move { proxy::handle(cluster, req).await }
+                })
+                .await
+            {
+                eprintln!("inbound server error: {err:?}");
+            }
+        }));
+    }
+
+    for task in tasks {
+        let _ = task.await;
+    }
+
+    Ok(())
 }
