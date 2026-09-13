@@ -41,6 +41,7 @@ async fn proxies_request_through_the_compiled_binary() {
         .arg("127.0.0.1:0")
         .arg(upstream_addr.to_string())
         .stdout(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .expect("failed to start server binary");
 
