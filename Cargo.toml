@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cluster",
+    "crates/outbound",
+    "crates/inbound",
+    "crates/proxy",
+    "crates/server",
+]
