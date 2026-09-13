@@ -32,7 +32,13 @@ impl InboundServer {
         Fut: Future<Output = Response<ResponseBody>> + Send + 'static,
     {
         loop {
-            let (stream, _peer_addr) = self.listener.accept().await?;
+            let (stream, _peer_addr) = match self.listener.accept().await {
+                Ok(pair) => pair,
+                Err(err) => {
+                    eprintln!("inbound accept error: {err:?}");
+                    continue;
+                }
+            };
             let io = TokioIo::new(stream);
             let handler = handler.clone();
             tokio::spawn(async move {
