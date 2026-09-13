@@ -143,9 +143,16 @@ async fn serve_tls<F, Fut>(
             return;
         }
     };
-    if let Err(err) = Pin::new(&mut tls_stream).accept().await {
-        eprintln!("inbound TLS handshake error: {err:?}");
-        return;
+    match tokio::time::timeout(timeouts.header_read, Pin::new(&mut tls_stream).accept()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            eprintln!("inbound TLS handshake error: {err:?}");
+            return;
+        }
+        Err(_) => {
+            eprintln!("inbound TLS handshake timed out");
+            return;
+        }
     }
 
     let (timed, handle) = ConnectionTimeout::new(tls_stream, timeouts.idle, timeouts.header_read);

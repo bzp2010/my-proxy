@@ -12,7 +12,9 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use openssl::ssl::{Ssl, SslConnector, SslMethod, SslVerifyMode};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::sleep;
 use tokio_openssl::SslStream;
 
 use inbound::{InboundServer, ListenAddr, TimeoutConfig};
@@ -102,4 +104,46 @@ async fn https_listener_forwards_a_real_request() {
     assert_eq!(response.status(), 200);
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body_bytes[..], b"hello from upstream");
+}
+
+#[tokio::test]
+async fn stalled_tls_handshake_is_closed_after_the_header_read_timeout() {
+    let upstream_addr = spawn_fake_upstream().await;
+    let cluster = Arc::new(cluster::Cluster::new(vec![cluster::Endpoint {
+        addr: upstream_addr,
+    }]));
+
+    let (_dir, cert_path, key_path) = common::self_signed_cert();
+    let listen_addr = ListenAddr::Https {
+        addr: "127.0.0.1:0".parse().unwrap(),
+        tls: inbound::tls::TlsConfig { cert_path, key_path },
+    };
+    let server = InboundServer::bind(
+        listen_addr,
+        TimeoutConfig {
+            header_read: Duration::from_millis(200),
+            idle: Duration::from_secs(10),
+        },
+    )
+    .await
+    .expect("bind should succeed");
+    let proxy_addr = server.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let _ = server
+            .serve(move |req| {
+                let cluster = cluster.clone();
+                async move { proxy::handle(cluster, req).await }
+            })
+            .await;
+    });
+
+    // Connect the raw TCP socket but never send a ClientHello: the
+    // handshake must not be allowed to hang forever.
+    let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+    sleep(Duration::from_millis(500)).await;
+
+    let mut buf = [0u8; 1];
+    let result = stream.read(&mut buf).await;
+    assert!(matches!(result, Ok(0) | Err(_)));
 }
